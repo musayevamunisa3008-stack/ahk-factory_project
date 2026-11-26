@@ -84,7 +84,13 @@ export const CartProvider = ({ children }) => {
   };
 
   const removeFromCart = (identifier) => {
-    setCart(prev => prev.filter(item => item.cart_item_id !== identifier && item.product_id !== identifier));
+    setCart(prev => prev.filter(item => {
+      const idStr = String(identifier);
+      if (item.cart_item_id) {
+        return String(item.cart_item_id) !== idStr;
+      }
+      return String(item.product_id) !== idStr;
+    }));
     showToast('Товар удален из корзины', 'info');
   };
 
@@ -92,7 +98,12 @@ export const CartProvider = ({ children }) => {
     setCart(prev => {
       return prev
         .map(item => {
-          if (item.cart_item_id === identifier || item.product_id === identifier) {
+          const idStr = String(identifier);
+          const isMatch = item.cart_item_id
+            ? String(item.cart_item_id) === idStr
+            : String(item.product_id) === idStr;
+
+          if (isMatch) {
             const newQty = item.quantity + delta;
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }

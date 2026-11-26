@@ -5,18 +5,18 @@
       "first_name": "Олег",
       "last_name": "Иванов",
       "email": "oleg@example.com",
-      "password_hash": "$2a$10$fBX/wwm3ebGFmI5qPzHIK.J9CCsmcPYFUK1CyWuzgNNIcRFBYvQei",
+      "password_hash": "$2a$10$JQ8iacbvDLFJ6VQQx8Wq2.C.UXj14TQLW7fFKkDIxorxVoSTwBoTG",
       "phone": "+998 (90) 123-45-67",
-      "created_at": "2026-10-22T06:48:27.410Z"
+      "created_at": "2026-11-07T11:41:19.299Z"
     },
     {
       "id": 2,
       "first_name": "Behruz",
       "last_name": "Musayev",
-      "email": "musayevamunisa3008@gmail.com",
-      "password_hash": "$2a$10$EqH/azhMBjASsBIHasLWbuqM8i2E/riHC.x/NI4/VP3wHbq6waHOa",
-      "phone": "+998918883917",
-      "created_at": "2026-11-07T08:16:21.323Z"
+      "email": "canadadioncanada@gmail.com",
+      "password_hash": "$2a$10$ZsaSsl9fx5hLtNRGBsVspO4b46O7NWFXXPicQqaqIkVSY9dwmrprS",
+      "phone": "+998918883017",
+      "created_at": "2026-11-09T11:48:09.907Z"
     }
   ],
   "products": [
@@ -34,7 +34,7 @@
       "is_featured": true,
       "badge": "Хит продаж",
       "wood_type": "Орех",
-      "created_at": "2026-10-24T06:48:27.334Z"
+      "created_at": "2026-11-09T11:41:19.224Z"
     },
     {
       "id": 2,
@@ -50,7 +50,7 @@
       "is_featured": false,
       "badge": "Новинка",
       "wood_type": "Дуб",
-      "created_at": "2026-10-24T06:48:27.335Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 3,
@@ -66,7 +66,7 @@
       "is_featured": true,
       "badge": "Премиум выбор",
       "wood_type": "Дуб",
-      "created_at": "2026-10-24T06:48:27.335Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 4,
@@ -82,7 +82,7 @@
       "is_featured": false,
       "badge": "Элегант",
       "wood_type": "Ясень",
-      "created_at": "2026-10-24T06:48:27.335Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 5,
@@ -98,7 +98,7 @@
       "is_featured": true,
       "badge": "Выбор дизайнеров",
       "wood_type": "Ясень",
-      "created_at": "2026-10-24T06:48:27.335Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 6,
@@ -114,7 +114,7 @@
       "is_featured": true,
       "badge": "Эксклюзив",
       "wood_type": "Кожа / Металл",
-      "created_at": "2026-10-24T06:48:27.335Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 7,
@@ -130,7 +130,7 @@
       "is_featured": true,
       "badge": "Индивидуальный размер",
       "wood_type": "Шпон дуба",
-      "created_at": "2026-10-24T06:48:27.335Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 8,
@@ -146,7 +146,7 @@
       "is_featured": false,
       "badge": "Рустик",
       "wood_type": "Сосна",
-      "created_at": "2026-10-24T06:48:27.335Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 9,
@@ -162,7 +162,7 @@
       "is_featured": true,
       "badge": "Премиум выбор",
       "wood_type": "Мореный дуб",
-      "created_at": "2026-10-25T08:00:00.000Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 10,
@@ -178,7 +178,7 @@
       "is_featured": false,
       "badge": "Скандинавия",
       "wood_type": "Беленый дуб",
-      "created_at": "2026-10-25T08:30:00.000Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 11,
@@ -194,7 +194,7 @@
       "is_featured": true,
       "badge": "Хит продаж",
       "wood_type": "Ясень / Велюр",
-      "created_at": "2026-10-25T09:00:00.000Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 12,
@@ -210,7 +210,7 @@
       "is_featured": false,
       "badge": "Акцент",
       "wood_type": "Дуб / Велюр",
-      "created_at": "2026-10-25T09:30:00.000Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     },
     {
       "id": 13,
@@ -226,79 +226,68 @@
       "is_featured": true,
       "badge": "Премиум выбор",
       "wood_type": "Массив дуба / Ткань",
-      "created_at": "2026-10-25T10:00:00.000Z"
+      "created_at": "2026-11-09T11:41:19.225Z"
     }
   ],
   "orders": [
     {
-      "id": 1002,
-      "user_id": 1,
-      "user_name": "Олег Иванов",
-      "user_email": "oleg@example.com",
-      "phone": "+998 90 123-45-67",
-      "address": "Ташкент, ул. Нукус, 29",
-      "total_price": 11800000,
-      "status": "Новый",
+      "id": 1005,
+      "user_id": 2,
+      "user_name": "Behruz Musayev",
+      "user_email": "canadadioncanada@gmail.com",
+      "phone": "+998918883017",
+      "address": "8a, Гавхар 2-й проезд, Гавхар махалля, Чиланзар, Чиланзарский район, Ташкент, 100000, Узбекистан",
+      "items_price": 3600000,
+      "delivery_fee": 150000,
+      "promo_code": null,
+      "total_price": 3750000,
+      "status": "В доставке",
       "payment_method": "При получении",
       "customer_notes": "",
       "logistics_notes": "",
       "items": [
         {
           "id": 1,
-          "product_id": 1,
-          "product_title": "Обеденный стол \"Монтана\"",
-          "product_price": 11800000,
+          "product_id": 12,
+          "product_title": "Обеденный стул \"Терра\"",
+          "product_price": 3600000,
           "quantity": 1,
-          "dimensions": "220 × 105 × 76 см",
-          "wood_finish": "Американский орех (Шоколадный)",
-          "fabric_type": "Не требуется (Массив дерева)",
-          "is_custom": true,
-          "custom_dimensions": "220 × 105 × 76 см",
-          "custom_notes": "Скругление углов радиусом 20 мм",
-          "image_url": "/images/table-walnut.jpg"
+          "dimensions": "52 × 55 × 83 см (высота посадки 46 см)",
+          "wood_finish": "Дуб / Велюр",
+          "fabric_type": "",
+          "is_custom": false,
+          "custom_dimensions": "",
+          "custom_notes": "",
+          "image_url": "/images/chair-terracotta.jpg",
+          "image": "/images/chair-terracotta.jpg"
         }
       ],
-      "created_at": "2026-10-24T14:15:47.574Z"
-    },
-    {
-      "id": 1001,
-      "user_id": 1,
-      "user_name": "Олег Иванов",
-      "user_email": "oleg@example.com",
-      "phone": "+998 (90) 123-45-67",
-      "address": "г. Ташкент, Мирабадский район, ул. Нукус, д. 29, кв. 14",
-      "total_price": 11800000,
-      "status": "В производстве",
-      "payment_method": "При получении",
-      "customer_notes": "Удобно принять доставку в субботу после 14:00.",
-      "logistics_notes": "Подъем на 4 этаж. Грузовой лифт есть. Курьер назначен.",
-      "items": [
-        {
-          "id": 1,
-          "product_id": 1,
-          "product_title": "Обеденный стол \"Монтана\"",
-          "product_price": 11800000,
-          "quantity": 1,
-          "dimensions": "200 × 95 × 76 см",
-          "image_url": "/images/table-walnut.jpg"
-        }
-      ],
-      "created_at": "2026-10-22T06:48:27.410Z"
+      "created_at": "2026-11-11T14:36:42.281Z"
     }
   ],
-  "nextUserId": 3,
-  "nextProductId": 14,
-  "nextOrderId": 1003,
   "admin_security": {
     "failed_attempts": 0,
     "block_stage": 0,
     "lock_until": null
   },
   "user_security": {
-    "musayevamunisa3008@gmail.com": {
+    "canadadioncanada@gnail.com": {
+      "failed_attempts": 1,
+      "block_stage": 0,
+      "lock_until": null
+    },
+    "canadadioncanada@gail.com": {
+      "failed_attempts": 0,
+      "block_stage": 0,
+      "lock_until": null
+    },
+    "canadadioncanada@gmail.com": {
       "failed_attempts": 0,
       "block_stage": 0,
       "lock_until": null
     }
-  }
+  },
+  "nextUserId": 3,
+  "nextProductId": 14,
+  "nextOrderId": 1006
 }

@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useCart } from '../context/CartContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
+import { resolveAssetUrl } from '../config/api';
 import {
   Search,
   Filter,
@@ -281,8 +282,12 @@ export const CatalogPage = ({
                 {/* Photo container */}
                 <div style={{ position: 'relative', height: '260px', overflow: 'hidden', background: '#090A0D' }}>
                   <img
-                    src={p.image_url}
+                    src={resolveAssetUrl(p.image_url)}
                     alt={p.title}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = resolveAssetUrl('/images/table-walnut.jpg');
+                    }}
                     style={{
                       width: '100%',
                       height: '100%',

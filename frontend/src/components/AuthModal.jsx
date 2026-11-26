@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { getApiUrl } from '../config/api';
 import {
   X,
   Lock,
@@ -52,7 +53,7 @@ export const AuthModal = () => {
   const checkEmailSecurity = async (targetEmail) => {
     if (!targetEmail || !targetEmail.includes('@')) return;
     try {
-      const res = await fetch(`/api/auth/security-status?email=${encodeURIComponent(targetEmail.trim().toLowerCase())}`);
+      const res = await fetch(getApiUrl(`/api/auth/security-status?email=${encodeURIComponent(targetEmail.trim().toLowerCase())}`));
       if (res.ok) {
         const text = await res.text();
         if (text && text.trim()) {

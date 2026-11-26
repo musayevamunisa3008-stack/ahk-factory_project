@@ -1,3 +1,5 @@
+import { resolveAssetUrl } from '../config/api';
+
 /**
  * AHK FACTORY - FURNITURE CUSTOMIZER DATA & IMAGE MAPPING
  * 
@@ -276,22 +278,25 @@ export function normalizeMaterialId(id) {
  * @returns {string} Image URL path
  */
 export function getProductImage(product, woodId, fabricId) {
-  if (!product) return '/images/table-walnut.jpg';
+  if (!product) return resolveAssetUrl('/images/table-walnut.jpg');
 
   const cat = (product.category || '').toLowerCase();
   const cleanWood = normalizeMaterialId(woodId);
   const cleanFabric = normalizeMaterialId(fabricId);
 
+  let chosen = '';
+
   // 1. DINING TABLES
   if (cat.includes('стол') || cat.includes('table') || cat.includes('stollar') || cat.includes('masa')) {
     if (cleanWood && PRODUCT_IMAGE_MAP.tables[cleanWood]) {
-      return PRODUCT_IMAGE_MAP.tables[cleanWood];
+      chosen = PRODUCT_IMAGE_MAP.tables[cleanWood];
+    } else {
+      chosen = product.image_url || '/images/table-walnut.jpg';
     }
-    return product.image_url || '/images/table-walnut.jpg';
   }
 
   // 2. CHAIRS & UPHOLSTERY
-  if (
+  else if (
     cat.includes('стул') ||
     cat.includes('диван') ||
     cat.includes('chair') ||
@@ -300,32 +305,38 @@ export function getProductImage(product, woodId, fabricId) {
     cat.includes('sandalye')
   ) {
     if (cleanFabric && cleanFabric !== 'none' && PRODUCT_IMAGE_MAP.chairs[cleanFabric]) {
-      return PRODUCT_IMAGE_MAP.chairs[cleanFabric];
+      chosen = PRODUCT_IMAGE_MAP.chairs[cleanFabric];
+    } else if (cleanWood && PRODUCT_IMAGE_MAP.chairs[cleanWood]) {
+      chosen = PRODUCT_IMAGE_MAP.chairs[cleanWood];
+    } else {
+      chosen = product.image_url || '/images/chair-leather.jpg';
     }
-    if (cleanWood && PRODUCT_IMAGE_MAP.chairs[cleanWood]) {
-      return PRODUCT_IMAGE_MAP.chairs[cleanWood];
-    }
-    return product.image_url || '/images/chair-leather.jpg';
   }
 
   // 3. WARDROBES
-  if (cat.includes('шкаф') || cat.includes('wardrobe') || cat.includes('shkaf') || cat.includes('dolap')) {
+  else if (cat.includes('шкаф') || cat.includes('wardrobe') || cat.includes('shkaf') || cat.includes('dolap')) {
     if (cleanWood && PRODUCT_IMAGE_MAP.wardrobes[cleanWood]) {
-      return PRODUCT_IMAGE_MAP.wardrobes[cleanWood];
+      chosen = PRODUCT_IMAGE_MAP.wardrobes[cleanWood];
+    } else {
+      chosen = product.image_url || '/images/wardrobe-oak.jpg';
     }
-    return product.image_url || '/images/wardrobe-oak.jpg';
   }
 
   // 4. DOORS
-  if (cat.includes('двер') || cat.includes('door') || cat.includes('eshik') || cat.includes('kapi')) {
+  else if (cat.includes('двер') || cat.includes('door') || cat.includes('eshik') || cat.includes('kapi')) {
     if (cleanWood && PRODUCT_IMAGE_MAP.doors[cleanWood]) {
-      return PRODUCT_IMAGE_MAP.doors[cleanWood];
+      chosen = PRODUCT_IMAGE_MAP.doors[cleanWood];
+    } else {
+      chosen = product.image_url || '/images/door-oak.jpg';
     }
-    return product.image_url || '/images/door-oak.jpg';
   }
 
   // Fallback
-  return product.image_url || '/images/table-walnut.jpg';
+  else {
+    chosen = product.image_url || '/images/table-walnut.jpg';
+  }
+
+  return resolveAssetUrl(chosen);
 }
 
 // Backward compatibility alias

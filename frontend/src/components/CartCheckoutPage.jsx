@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
+import { getApiUrl, resolveAssetUrl } from '../config/api';
+import { getStoredOrders, createStoredOrder } from '../services/storageService';
 import confetti from 'canvas-confetti';
 import {
   ShoppingBag,
@@ -21,7 +23,9 @@ import {
   Sparkles,
   Tag,
   Map,
-  Ruler
+  Ruler,
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import { LocationPickerMap } from './LocationPickerMap';
 
@@ -41,23 +45,160 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
   const [discount, setDiscount] = useState(0);
   const [promoApplied, setPromoApplied] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [completedOrder, setCompletedOrder] = useState(null);
+  const [completedOrder, setCompletedOrder] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ahk_active_completed_order');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Apply promo
-  const handleApplyPromo = () => {
-    const code = promoCode.trim().toUpperCase();
-    if (code === 'AHKFACTORY' || code === 'AHK' || code === 'MANUFAKTURA') {
-      const discountVal = Math.round(totalAmount * 0.05);
-      setDiscount(discountVal);
+  const dismissCompletedOrder = () => {
+    setCompletedOrder(null);
+    try {
+      localStorage.removeItem('ahk_active_completed_order');
+      localStorage.removeItem('ahk_active_order_id');
+    } catch (e) {}
+  };
+
+  const DEFAULT_DELIVERY_FEE = 150000; // 150 000 сум стандартная доставка
+
+  // Check if promo has already been used by this user
+  const hasUserUsedPromo = () => {
+    if (!user) {
+      return localStorage.getItem('ahk_promo_used_guest') === 'true';
+    }
+    const byId = user.id && localStorage.getItem(`ahk_promo_used_${user.id}`) === 'true';
+    const byEmail = user.email && localStorage.getItem(`ahk_promo_used_${user.email}`) === 'true';
+    return Boolean(user.used_promo || byId || byEmail);
+  };
+
+  // Apply promo: "Ahk Factory" -> free delivery (0 UZS), strictly 1-time per user
+  const handleApplyPromo = async () => {
+    const raw = promoCode.trim();
+    if (!raw) {
+      setErrorMessage('Пожалуйста, введите промокод');
+      return;
+    }
+
+    const clean = raw.toLowerCase().replace(/\s+/g, ' ');
+    const isAhkPromo = clean === 'ahk factory' || clean === 'ahkfactory' || clean === 'ahk';
+
+    if (isAhkPromo) {
+      // 1. Check local / state record
+      if (hasUserUsedPromo()) {
+        setPromoApplied(false);
+        setErrorMessage('Промокод уже был использован');
+        return;
+      }
+
+      // 2. Validate with backend database by user id, email and phone if available
+      try {
+        const res = await fetch(getApiUrl('/api/promo/verify'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({
+            promo_code: raw,
+            email: user?.email,
+            phone: phone || user?.phone
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.valid === false) {
+            setPromoApplied(false);
+            setErrorMessage(data.error || 'Промокод уже был использован');
+            return;
+          }
+        }
+      } catch (e) {
+        // Fall back to local validation
+      }
+
       setPromoApplied(true);
       setErrorMessage('');
     } else {
-      setErrorMessage('Неверный промокод. Введите AHKFACTORY');
+      setPromoApplied(false);
+      setErrorMessage('Неверный промокод. Введите «Ahk Factory»');
     }
   };
 
-  const finalPrice = Math.max(0, totalAmount - discount);
+  // Delivery fee calculation
+  const deliveryFee = promoApplied ? 0 : DEFAULT_DELIVERY_FEE;
+  const finalPrice = Math.max(0, totalAmount + deliveryFee - discount);
+
+  // Live-обновление (Polling + Custom Event) экрана «Спасибо за заказ!»
+  useEffect(() => {
+    if (!completedOrder?.id) return;
+
+    let isSubscribed = true;
+
+    const syncStatus = async () => {
+      // 1. Проверяем локальную базу данных
+      const storedOrders = getStoredOrders();
+      if (Array.isArray(storedOrders)) {
+        const localFound = storedOrders.find(o => String(o.id) === String(completedOrder.id));
+        if (!localFound) {
+          dismissCompletedOrder();
+          return;
+        }
+        if (localFound.status && localFound.status !== completedOrder.status) {
+          setCompletedOrder(prev => {
+            const updated = { ...prev, ...localFound };
+            try {
+              localStorage.setItem('ahk_active_completed_order', JSON.stringify(updated));
+            } catch (e) {}
+            return updated;
+          });
+          return;
+        }
+      }
+
+      // 2. Резервная сетевая проверка при наличии бэкенда
+      try {
+        const res = await fetch(getApiUrl('/api/orders'), {
+          headers: getAuthHeaders()
+        });
+
+        if (res.ok && isSubscribed) {
+          const ordersList = await res.json();
+          if (Array.isArray(ordersList)) {
+            const found = ordersList.find(o => String(o.id) === String(completedOrder.id));
+            if (!found) {
+              dismissCompletedOrder();
+              return;
+            }
+            if (found.status && found.status !== completedOrder.status) {
+              setCompletedOrder(prev => {
+                const updated = { ...prev, ...found };
+                try {
+                  localStorage.setItem('ahk_active_completed_order', JSON.stringify(updated));
+                } catch (e) {}
+                return updated;
+              });
+            }
+            return;
+          }
+        }
+      } catch (e) {}
+    };
+
+    syncStatus();
+    const interval = setInterval(syncStatus, 2000);
+    const onOrdersUpdated = () => syncStatus();
+    window.addEventListener('ahk_orders_updated', onOrdersUpdated);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+      window.removeEventListener('ahk_orders_updated', onOrdersUpdated);
+    };
+  }, [completedOrder?.id, completedOrder?.status, user?.id]);
 
   // Submit Order
   const handleCheckout = async (e) => {
@@ -76,26 +217,60 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
     setErrorMessage('');
 
     try {
+      const itemsPayload = cart.map((item) => ({
+        ...item,
+        image: item.image || item.image_url || '',
+        image_url: item.image_url || item.image || ''
+      }));
+
       const orderPayload = {
-        items: cart,
+        items: itemsPayload,
         phone,
         address,
         payment_method: paymentMethod,
-        customer_notes: customerNotes
+        customer_notes: customerNotes,
+        promo_code: promoApplied ? 'Ahk Factory' : null,
+        delivery_fee: deliveryFee,
+        total_price: finalPrice
       };
 
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify(orderPayload)
-      });
+      let finalOrder = null;
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Ошибка при оформлении заказа');
+      try {
+        const res = await fetch(getApiUrl('/api/orders'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify(orderPayload)
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.order) {
+            finalOrder = data.order;
+          }
+        }
+      } catch (networkErr) {
+        // Fall back to offline local storage
+      }
+
+      if (!finalOrder) {
+        finalOrder = createStoredOrder(orderPayload, user);
+      }
+
+      // Mark promo code as used permanently for this user
+      if (promoApplied) {
+        if (user?.id) localStorage.setItem(`ahk_promo_used_${user.id}`, 'true');
+        if (user?.email) localStorage.setItem(`ahk_promo_used_${user.email}`, 'true');
+        localStorage.setItem('ahk_promo_used_guest', 'true');
+        if (user) {
+          user.used_promo = true;
+          try {
+            localStorage.setItem('furniture_user', JSON.stringify({ ...user, used_promo: true }));
+          } catch (e) {}
+        }
       }
 
       // Launch victory confetti
@@ -106,11 +281,21 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
           origin: { y: 0.6 },
           colors: ['#C89B6D', '#E0B68A', '#34D399', '#FFFFFF']
         });
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) {}
 
-      setCompletedOrder(data.order);
+      // Save order to client-side orders list for instant access in "My Orders"
+      try {
+        const userOrdersKey = user?.id ? `ahk_user_orders_${user.id}` : 'ahk_user_orders_guest';
+        const existing = JSON.parse(localStorage.getItem(userOrdersKey) || '[]');
+        const updated = [finalOrder, ...existing.filter(o => o.id !== finalOrder.id)];
+        localStorage.setItem(userOrdersKey, JSON.stringify(updated));
+      } catch (e) {}
+
+      setCompletedOrder(finalOrder);
+      try {
+        localStorage.setItem('ahk_active_completed_order', JSON.stringify(finalOrder));
+        localStorage.setItem('ahk_active_order_id', String(finalOrder.id));
+      } catch (e) {}
       clearCart();
     } catch (err) {
       setErrorMessage(err.message || 'Не удалось оформить заказ');
@@ -148,9 +333,146 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
               <CheckCircle2 size={38} color="#34D399" />
             </div>
 
-            <span className="badge-pill badge-gold" style={{ marginBottom: '12px' }}>
-              Заказ #{completedOrder.id}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+              <span className="badge-pill badge-gold" style={{ fontSize: '13px', padding: '6px 14px' }}>
+                Заказ #{completedOrder.id}
+              </span>
+              <span
+                className="badge-pill"
+                style={{
+                  fontSize: '13px',
+                  padding: '6px 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: (completedOrder.status === 'Доставлен' || completedOrder.status === 'Выполнен')
+                    ? 'rgba(52, 211, 153, 0.2)'
+                    : completedOrder.status === 'В доставке'
+                    ? 'rgba(96, 165, 250, 0.2)'
+                    : completedOrder.status === 'В производстве'
+                    ? 'rgba(200, 155, 109, 0.2)'
+                    : completedOrder.status === 'Отменен'
+                    ? 'rgba(239, 68, 68, 0.2)'
+                    : 'rgba(59, 130, 246, 0.2)',
+                  color: (completedOrder.status === 'Доставлен' || completedOrder.status === 'Выполнен')
+                    ? '#34D399'
+                    : completedOrder.status === 'В доставке'
+                    ? '#93C5FD'
+                    : completedOrder.status === 'В производстве'
+                    ? 'var(--wood-light)'
+                    : completedOrder.status === 'Отменен'
+                    ? '#F87171'
+                    : '#93C5FD',
+                  border: '1px solid currentColor'
+                }}
+              >
+                <span
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: (completedOrder.status === 'Доставлен' || completedOrder.status === 'Выполнен')
+                      ? '#34D399'
+                      : completedOrder.status === 'В доставке'
+                      ? '#60A5FA'
+                      : completedOrder.status === 'В производстве'
+                      ? '#C89B6D'
+                      : completedOrder.status === 'Отменен'
+                      ? '#EF4444'
+                      : '#3B82F6'
+                  }}
+                  className="animate-pulse"
+                />
+                СТАТУС: <strong>{(completedOrder.status || 'Новый').toUpperCase()}</strong>
+              </span>
+            </div>
+
+            {/* Visual Real-Time Timeline Stepper */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: '8px',
+                margin: '16px auto 26px auto',
+                maxWidth: '520px'
+              }}
+            >
+              {[
+                {
+                  key: 'step_new',
+                  title: '1. Новый',
+                  desc: 'Заказ принят',
+                  isCurrent: (completedOrder.status || 'Новый') === 'Новый',
+                  isPast: ['В производстве', 'В доставке', 'Доставлен', 'Выполнен'].includes(completedOrder.status)
+                },
+                {
+                  key: 'step_production',
+                  title: completedOrder.status === 'В доставке' ? '2. В доставке' : '2. В производстве',
+                  desc: completedOrder.status === 'В доставке' ? 'Курьер везет заказ' : 'Сборка мастером',
+                  isCurrent: ['В производстве', 'В доставке'].includes(completedOrder.status),
+                  isPast: ['Доставлен', 'Выполнен'].includes(completedOrder.status)
+                },
+                {
+                  key: 'step_delivered',
+                  title: '3. Доставлен',
+                  desc: ['Доставлен', 'Выполнен'].includes(completedOrder.status) ? 'Вручен клиенту' : 'Ожидает вручения',
+                  isCurrent: ['Доставлен', 'Выполнен'].includes(completedOrder.status),
+                  isPast: false
+                }
+              ].map((step) => {
+                const isFinished = ['Доставлен', 'Выполнен'].includes(completedOrder.status);
+                const isDelivering = completedOrder.status === 'В доставке';
+                return (
+                  <div
+                    key={step.key}
+                    style={{
+                      padding: '12px 10px',
+                      borderRadius: '10px',
+                      background: step.isCurrent
+                        ? (isFinished
+                            ? 'rgba(52, 211, 153, 0.18)'
+                            : isDelivering
+                            ? 'rgba(96, 165, 250, 0.18)'
+                            : 'rgba(200, 155, 109, 0.18)')
+                        : step.isPast
+                        ? 'rgba(52, 211, 153, 0.1)'
+                        : 'rgba(255, 255, 255, 0.03)',
+                      border: step.isCurrent
+                        ? (isFinished
+                            ? '1px solid #34D399'
+                            : isDelivering
+                            ? '1px solid #60A5FA'
+                            : '1px solid var(--wood-light)')
+                        : step.isPast
+                        ? '1px solid rgba(52, 211, 153, 0.4)'
+                        : '1px solid var(--border-subtle)',
+                      transition: 'all 0.3s ease'
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        color: step.isCurrent
+                          ? (isFinished
+                              ? '#34D399'
+                              : isDelivering
+                              ? '#93C5FD'
+                              : 'var(--wood-light)')
+                          : step.isPast
+                          ? '#34D399'
+                          : 'var(--text-muted)'
+                      }}
+                    >
+                      {step.isPast ? `✓ ${step.title}` : step.title}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
+                      {step.desc}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
 
             <h1
               className="serif-title"
@@ -252,7 +574,7 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
             <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
               <button
                 onClick={() => {
-                  setCompletedOrder(null);
+                  dismissCompletedOrder();
                   openMyOrders();
                 }}
                 className="btn-secondary"
@@ -261,7 +583,7 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
               </button>
               <button
                 onClick={() => {
-                  setCompletedOrder(null);
+                  dismissCompletedOrder();
                   setActivePage('catalog');
                 }}
                 className="btn-primary"
@@ -379,9 +701,9 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {cart.map((item) => (
+              {cart.map((item, idx) => (
                 <div
-                  key={item.product_id}
+                  key={item.cart_item_id || `${item.product_id}-${idx}`}
                   className="glass-card"
                   style={{
                     padding: '18px',
@@ -393,8 +715,12 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
                 >
                   {/* Thumbnail */}
                   <img
-                    src={item.image_url}
+                    src={resolveAssetUrl(item.image_url)}
                     alt={item.title}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = resolveAssetUrl('/images/table-walnut.jpg');
+                    }}
                     style={{
                       width: '84px',
                       height: '84px',
@@ -577,11 +903,16 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
                 {t('promo_apply')}
               </button>
             </div>
-            {promoApplied && (
-              <div style={{ color: '#34D399', fontSize: '13px', marginTop: '8px', marginLeft: '4px' }}>
-                ✓ {t('promo_success')}: {formatPrice(discount)}
+            {promoApplied ? (
+              <div style={{ color: '#34D399', fontSize: '13px', marginTop: '8px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <CheckCircle2 size={15} />
+                <span>✓ Промокод «Ahk Factory» применен: стоимость доставки 0 сум!</span>
               </div>
-            )}
+            ) : errorMessage && (errorMessage.includes('Промокод') || errorMessage.includes('промокод')) ? (
+              <div style={{ color: '#F87171', fontSize: '13px', marginTop: '8px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>✕ {errorMessage}</span>
+              </div>
+            ) : null}
           </div>
 
           {/* =================================================== */}
@@ -821,7 +1152,18 @@ export const CartCheckoutPage = ({ setActivePage, openMyOrders }) => {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                     <span>{t('checkout_delivery')}</span>
-                    <span style={{ color: '#34D399', fontWeight: '600' }}>{t('checkout_delivery_free')}</span>
+                    {promoApplied ? (
+                      <span style={{ color: '#34D399', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        <span>0 сум</span>
+                        <span style={{ fontSize: '11px', textDecoration: 'line-through', opacity: 0.6, color: 'var(--text-muted)' }}>
+                          {formatPrice(DEFAULT_DELIVERY_FEE)}
+                        </span>
+                      </span>
+                    ) : (
+                      <span style={{ color: '#F8F6F2', fontWeight: '600' }}>
+                        {formatPrice(DEFAULT_DELIVERY_FEE)}
+                      </span>
+                    )}
                   </div>
                   {discount > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#34D399' }}>

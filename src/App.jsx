@@ -17,12 +17,22 @@ import { DeviceSelectorModal } from './components/DeviceSelectorModal';
 import { DeviceModeFloatingSwitch } from './components/DeviceModeFloatingSwitch';
 import { Toast } from './components/Toast';
 import { INITIAL_PRODUCTS } from './data/initialProducts';
+import { getApiUrl, resolveAssetUrl } from './config/api';
+import { getStoredProducts } from './services/storageService';
+
+const mapProductImages = (items) => {
+  if (!Array.isArray(items)) return [];
+  return items.map(p => ({
+    ...p,
+    image_url: resolveAssetUrl(p.image_url)
+  }));
+};
 
 export function AppContent() {
   const { isMobile } = useDeviceMode();
   const [activePage, setActivePage] = useState('home'); // 'home' | 'catalog' | 'cart' | 'admin'
   const [selectedCategory, setSelectedCategory] = useState('все');
-  const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [products, setProducts] = useState(() => mapProductImages(INITIAL_PRODUCTS));
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [quickViewProduct, setQuickViewProduct] = useState(null);
   const [myOrdersOpen, setMyOrdersOpen] = useState(false);
@@ -30,27 +40,37 @@ export function AppContent() {
   // Fetch products
   const fetchProducts = async () => {
     try {
-      const res = await fetch('/api/products');
+      const res = await fetch(getApiUrl('/api/products'));
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          setProducts(data);
+          setProducts(mapProductImages(data));
+          return;
         }
       }
     } catch (e) {
-      console.warn('Backend unavailable, using initial catalog products:', e);
+      // Offline fallback
     } finally {
       setLoadingProducts(false);
     }
+
+    const stored = getStoredProducts();
+    setProducts(mapProductImages(stored.length > 0 ? stored : INITIAL_PRODUCTS));
   };
 
   useEffect(() => {
     fetchProducts();
+    const onProductsUpdated = () => fetchProducts();
+    window.addEventListener('ahk_products_updated', onProductsUpdated);
+    return () => window.removeEventListener('ahk_products_updated', onProductsUpdated);
   }, []);
 
-  // Listen to browser URL changes for /admin direct navigation
+  // Listen to browser URL changes for /admin direct navigation (supports GitHub Pages paths, search and hash)
   useEffect(() => {
-    if (window.location.pathname === '/admin') {
+    const path = window.location.pathname.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+    const search = new URLSearchParams(window.location.search);
+    if (path.endsWith('/admin') || hash === '#admin' || search.get('page') === 'admin') {
       setActivePage('admin');
     }
   }, []);

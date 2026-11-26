@@ -2,6 +2,7 @@ import React from 'react';
 import { useCart } from '../context/CartContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
+import { resolveAssetUrl } from '../config/api';
 import {
   ArrowRight,
   Sparkles,
@@ -37,7 +38,7 @@ export const HomePage = ({ setActivePage, setSelectedCategory, onQuickView, prod
           minHeight: '88vh',
           display: 'flex',
           alignItems: 'center',
-          backgroundImage: 'linear-gradient(to right, rgba(12, 13, 15, 0.95) 25%, rgba(12, 13, 15, 0.6) 60%, rgba(12, 13, 15, 0.85) 100%), url("/images/hero.jpg")',
+          backgroundImage: `linear-gradient(to right, rgba(12, 13, 15, 0.95) 25%, rgba(12, 13, 15, 0.6) 60%, rgba(12, 13, 15, 0.85) 100%), url("${resolveAssetUrl('/images/hero.jpg')}")`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           borderBottom: '1px solid var(--border-subtle)'
@@ -233,7 +234,7 @@ export const HomePage = ({ setActivePage, setSelectedCategory, onQuickView, prod
                 flexDirection: 'column',
                 justifyContent: 'flex-end',
                 padding: '28px',
-                backgroundImage: 'linear-gradient(to top, rgba(12, 13, 15, 0.95) 10%, rgba(12, 13, 15, 0.2) 65%), url("/images/table-walnut.jpg")',
+                backgroundImage: `linear-gradient(to top, rgba(12, 13, 15, 0.95) 10%, rgba(12, 13, 15, 0.2) 65%), url("${resolveAssetUrl('/images/table-walnut.jpg')}")`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 transition: 'all 0.4s ease'
@@ -268,7 +269,7 @@ export const HomePage = ({ setActivePage, setSelectedCategory, onQuickView, prod
                 flexDirection: 'column',
                 justifyContent: 'flex-end',
                 padding: '28px',
-                backgroundImage: 'linear-gradient(to top, rgba(12, 13, 15, 0.95) 10%, rgba(12, 13, 15, 0.2) 65%), url("/images/wardrobe-oak.jpg")',
+                backgroundImage: `linear-gradient(to top, rgba(12, 13, 15, 0.95) 10%, rgba(12, 13, 15, 0.2) 65%), url("${resolveAssetUrl('/images/wardrobe-oak.jpg')}")`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 transition: 'all 0.4s ease'
@@ -303,7 +304,7 @@ export const HomePage = ({ setActivePage, setSelectedCategory, onQuickView, prod
                 flexDirection: 'column',
                 justifyContent: 'flex-end',
                 padding: '28px',
-                backgroundImage: 'linear-gradient(to top, rgba(12, 13, 15, 0.95) 10%, rgba(12, 13, 15, 0.2) 65%), url("/images/chair-boucle.jpg")',
+                backgroundImage: `linear-gradient(to top, rgba(12, 13, 15, 0.95) 10%, rgba(12, 13, 15, 0.2) 65%), url("${resolveAssetUrl('/images/chair-boucle.jpg')}")`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 transition: 'all 0.4s ease'
@@ -338,7 +339,7 @@ export const HomePage = ({ setActivePage, setSelectedCategory, onQuickView, prod
                 flexDirection: 'column',
                 justifyContent: 'flex-end',
                 padding: '28px',
-                backgroundImage: 'linear-gradient(to top, rgba(12, 13, 15, 0.95) 10%, rgba(12, 13, 15, 0.2) 65%), url("/images/door-oak.jpg")',
+                backgroundImage: `linear-gradient(to top, rgba(12, 13, 15, 0.95) 10%, rgba(12, 13, 15, 0.2) 65%), url("${resolveAssetUrl('/images/door-oak.jpg')}")`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 transition: 'all 0.4s ease'
@@ -395,8 +396,12 @@ export const HomePage = ({ setActivePage, setSelectedCategory, onQuickView, prod
                 }}
               >
                 <img
-                  src="/images/craftsman.jpg"
+                  src={resolveAssetUrl('/images/craftsman.jpg')}
                   alt="Столярное производство Ahk Factory"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = resolveAssetUrl('/images/table-walnut.jpg');
+                  }}
                   style={{ width: '100%', height: '480px', objectFit: 'cover', display: 'block' }}
                 />
               </div>
@@ -582,8 +587,12 @@ export const HomePage = ({ setActivePage, setSelectedCategory, onQuickView, prod
                 {/* Photo container */}
                 <div style={{ position: 'relative', height: '240px', overflow: 'hidden', background: '#090A0D' }}>
                   <img
-                    src={p.image_url}
+                    src={resolveAssetUrl(p.image_url)}
                     alt={p.title}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = resolveAssetUrl('/images/table-walnut.jpg');
+                    }}
                     style={{
                       width: '100%',
                       height: '100%',

@@ -2,6 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
+import { getApiUrl, resolveAssetUrl } from '../config/api';
+import {
+  getStoredOrders,
+  updateStoredOrderStatus,
+  updateStoredOrderLogistics,
+  deleteStoredOrder,
+  getStoredProducts,
+  addStoredProduct,
+  updateStoredProduct,
+  deleteStoredProduct,
+  toggleStoredProductStock,
+  getStoredUsers,
+  getComputedAdminStats
+} from '../services/storageService';
 import {
   ShieldCheck,
   Lock,
@@ -49,14 +63,33 @@ const PRESET_IMAGES = [
 ];
 
 export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => {
-  const { isAdmin, loginAdmin, logoutAdmin, getAdminHeaders } = useAuth();
+  const { isAdmin: authContextIsAdmin, loginAdmin, logoutAdmin, getAdminHeaders } = useAuth();
   const { t } = useLanguage();
   const { formatPrice } = useCurrency();
+
+  // Hardcoded Admin Master Password
+  const ADMIN_MASTER_PASSWORD = 'Ahk123';
+
+  // Persistent Admin Authentication state: preserves session across page reloads
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(() => {
+    try {
+      return (
+        Boolean(authContextIsAdmin) ||
+        localStorage.getItem('ahk_admin_authenticated') === 'true' ||
+        Boolean(localStorage.getItem('furniture_admin_token'))
+      );
+    } catch {
+      return false;
+    }
+  });
+
+  const isAdmin = isAdminAuthenticated || Boolean(authContextIsAdmin);
 
   const getStatusLabel = (status) => {
     switch (status) {
       case 'Новый': return t('admin_status_new');
       case 'В производстве': return t('admin_status_in_progress');
+      case 'Доставлен': return 'Доставлен';
       case 'В доставке': return t('admin_status_delivering');
       case 'Выполнен': return t('admin_status_completed');
       case 'Отменен': return t('admin_status_cancelled');
@@ -160,6 +193,47 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
   useEffect(() => {
     if (isAdmin) {
       loadAdminData();
+      const onOrdersUpdated = () => {
+        const local = getStoredOrders();
+        setOrders(local);
+        setStats(getComputedAdminStats());
+      };
+      window.addEventListener('ahk_orders_updated', onOrdersUpdated);
+
+      // Auto-poll orders and stats every 2.5 seconds for cross-device & local synchronization
+      const interval = setInterval(() => {
+        const local = getStoredOrders();
+        if (Array.isArray(local)) {
+          setOrders(prev => (prev.length !== local.length ? local : prev));
+          setStats(getComputedAdminStats());
+        }
+
+        const headers = {
+          ...getAdminHeaders(),
+          'X-Admin-Key': ADMIN_MASTER_PASSWORD
+        };
+        fetch(getApiUrl('/api/admin/orders'), { headers })
+          .then(res => res.ok ? res.json() : fetch(getApiUrl('/api/orders'), { headers }).then(r => r.ok ? r.json() : null))
+          .then(data => {
+            if (Array.isArray(data) && data.length > 0) {
+              setOrders(data);
+            }
+          })
+          .catch(() => {});
+
+        fetch(getApiUrl('/api/admin/stats'), { headers })
+          .then(res => res.ok ? res.json() : null)
+          .then(statsData => {
+            if (statsData) {
+              setStats(statsData);
+            }
+          })
+          .catch(() => {});
+      }, 2500);
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('ahk_orders_updated', onOrdersUpdated);
+      };
     } else {
       checkAdminSecurityStatus();
     }
@@ -168,7 +242,7 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
   // Check current security & lock status on backend
   const checkAdminSecurityStatus = async () => {
     try {
-      const res = await fetch('/api/admin/security-status');
+      const res = await fetch(getApiUrl('/api/admin/security-status'));
       if (res.ok) {
         const text = await res.text();
         if (text && text.trim()) {
@@ -192,6 +266,39 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
     }
   };
 
+  // Read local lockout settings from localStorage on initial render
+  useEffect(() => {
+    try {
+      const savedLock = localStorage.getItem('ahk_admin_lock_until');
+      if (savedLock) {
+        const lockTime = new Date(savedLock).getTime();
+        const now = Date.now();
+        if (lockTime > now) {
+          setIsLocked(true);
+          setLockUntil(savedLock);
+          setRemainingSeconds(Math.max(1, Math.ceil((lockTime - now) / 1000)));
+          setAttemptsLeft(0);
+          const stage = Number(localStorage.getItem('ahk_admin_block_stage')) || 1;
+          setBlockStage(stage);
+          return;
+        } else {
+          localStorage.removeItem('ahk_admin_lock_until');
+          localStorage.removeItem('ahk_admin_attempts');
+        }
+      }
+
+      const savedAttempts = localStorage.getItem('ahk_admin_attempts');
+      if (savedAttempts !== null) {
+        const att = parseInt(savedAttempts, 10);
+        if (!isNaN(att) && att >= 0 && att <= 3) {
+          setAttemptsLeft(att);
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading admin lockout storage:', e);
+    }
+  }, []);
+
   // Real-time Countdown Timer (updates every second, auto-unlocks when expires)
   useEffect(() => {
     if (!isLocked || !lockUntil) return;
@@ -208,6 +315,10 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
         setLockUntil(null);
         setLoginError('');
         setAttemptsLeft(3);
+        try {
+          localStorage.removeItem('ahk_admin_lock_until');
+          localStorage.removeItem('ahk_admin_attempts');
+        } catch (e) {}
         checkAdminSecurityStatus();
       }
     };
@@ -227,142 +338,272 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
 
   const loadAdminData = async () => {
     setLoadingData(true);
+    // 1. Instantly load local data
+    const localOrders = getStoredOrders();
+    const localStats = getComputedAdminStats();
+    const localUsers = getStoredUsers();
+    const localProducts = getStoredProducts();
+
+    if (Array.isArray(localOrders)) {
+      setOrders(localOrders);
+      const initialStatuses = {};
+      const initialLogistics = {};
+      localOrders.forEach(o => {
+        initialStatuses[o.id] = o.status;
+        initialLogistics[o.id] = o.logistics_notes || '';
+      });
+      setEditingStatuses(initialStatuses);
+      setLogisticsNotesState(initialLogistics);
+    }
+    setStats(localStats);
+    setCustomers(localUsers);
+    if (Array.isArray(localProducts) && localProducts.length > 0) {
+      setAdminProducts(localProducts);
+    }
+
     try {
-      const headers = getAdminHeaders();
+      const headers = {
+        ...getAdminHeaders(),
+        'X-Admin-Key': ADMIN_MASTER_PASSWORD
+      };
 
-      // Fetch Orders
-      const ordersRes = await fetch('/api/admin/orders', { headers });
-      if (ordersRes.ok) {
-        const ordersData = await ordersRes.json();
-        setOrders(ordersData);
+      // 1. Загрузка списка всех заказов
+      let ordersRes = await fetch(getApiUrl('/api/admin/orders'), { headers });
 
-        // Initialize local edit states
-        const initialStatuses = {};
-        const initialLogistics = {};
-        ordersData.forEach(o => {
-          initialStatuses[o.id] = o.status;
-          initialLogistics[o.id] = o.logistics_notes || '';
-        });
-        setEditingStatuses(initialStatuses);
-        setLogisticsNotesState(initialLogistics);
+      // Если вернулся 401 или 403 — пробуем единый эндпоинт /api/orders
+      if (!ordersRes.ok) {
+        ordersRes = await fetch(getApiUrl('/api/orders'), { headers });
       }
 
-      // Fetch Stats
-      const statsRes = await fetch('/api/admin/stats', { headers });
+      if (ordersRes.ok) {
+        const ordersData = await ordersRes.json();
+        if (Array.isArray(ordersData) && ordersData.length > 0) {
+          setOrders(ordersData);
+
+          // Инициализируем локальные стейты редактирования
+          const initialStatuses = {};
+          const initialLogistics = {};
+          ordersData.forEach(o => {
+            initialStatuses[o.id] = o.status;
+            initialLogistics[o.id] = o.logistics_notes || '';
+          });
+          setEditingStatuses(initialStatuses);
+          setLogisticsNotesState(initialLogistics);
+        }
+      }
+
+      // 2. Fetch Stats
+      const statsRes = await fetch(getApiUrl('/api/admin/stats'), { headers });
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
       }
 
-      // Fetch Customers
-      const usersRes = await fetch('/api/admin/users', { headers });
+      // 3. Fetch Customers
+      const usersRes = await fetch(getApiUrl('/api/admin/users'), { headers });
       if (usersRes.ok) {
         const usersData = await usersRes.json();
         setCustomers(usersData);
       }
     } catch (e) {
-      console.error('Failed to load admin data:', e);
+      // Offline mode active
     } finally {
       setLoadingData(false);
     }
   };
 
-  // Login handler with progressive lockout support
+  // Login handler with hardcoded password Ahk123, progressive lockout and localStorage persistence
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     if (isLocked) return;
     setLoginError('');
     setLoginLoading(true);
 
-    try {
-      await loginAdmin(password);
+    const inputPassword = String(password).trim();
+
+    // 1. Проверяем правильность жестко заданного пароля Ahk123
+    if (inputPassword === ADMIN_MASTER_PASSWORD) {
+      // 1. Получаем настоящий JWT-токен администратора с бэкенда
+      let backendAdminToken = null;
+      try {
+        const loginRes = await fetch(getApiUrl('/api/admin/login'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: inputPassword })
+        });
+        const data = await loginRes.json();
+        if (loginRes.ok && data.adminToken) {
+          backendAdminToken = data.adminToken;
+        } else if (loginRes.status === 423) {
+          // Если бэкенд сообщил о блокировке
+          setIsLocked(true);
+          setLockUntil(data.lock_until);
+          setLoginError(data.error || 'Панель временно заблокирована');
+          setLoginLoading(false);
+          return;
+        }
+      } catch (beErr) {
+        console.warn('Backend login network note:', beErr.message);
+      }
+
+      const activeToken = backendAdminToken || ADMIN_MASTER_PASSWORD;
+      try {
+        localStorage.setItem('furniture_admin_token', activeToken);
+        localStorage.setItem('ahk_admin_authenticated', 'true');
+        localStorage.removeItem('ahk_admin_attempts');
+        localStorage.removeItem('ahk_admin_lock_until');
+        localStorage.removeItem('ahk_admin_block_stage');
+      } catch (err) {
+        console.warn('Storage error:', err);
+      }
+
+      if (loginAdmin) {
+        try {
+          await loginAdmin(inputPassword);
+        } catch (e) {}
+      }
+
+      setIsAdminAuthenticated(true);
       setPassword('');
       setIsLocked(false);
       setLockUntil(null);
       setRemainingSeconds(0);
       setBlockStage(0);
       setAttemptsLeft(3);
-    } catch (err) {
-      if (err.status === 423 || err.data?.locked) {
-        setIsLocked(true);
-        setLockUntil(err.data?.lock_until || new Date(Date.now() + 5 * 60 * 1000).toISOString());
-        setRemainingSeconds(err.data?.remaining_seconds || 300);
-        setBlockStage(err.data?.block_stage || 1);
-        setAttemptsLeft(0);
-        setLoginError(err.message || 'Панель временно заблокирована из-за 3 неверных попыток.');
-      } else {
-        if (err.data?.attempts_left !== undefined) {
-          setAttemptsLeft(err.data.attempts_left);
-        }
-        setLoginError(err.message || 'Ошибка авторизации. Неверный пароль.');
-      }
-    } finally {
       setLoginLoading(false);
+      return;
     }
+
+    // 2. Пароль неверный: уменьшаем счетчик оставшихся попыток
+    const nextAttempts = Math.max(0, attemptsLeft - 1);
+    setAttemptsLeft(nextAttempts);
+
+    if (nextAttempts <= 0) {
+      // 3 неверные попытки подряд — блокировка (5 мин, 15 мин, 30 мин, 60 мин)
+      const nextStage = (blockStage || 0) + 1;
+      const durationMinutes = nextStage === 1 ? 5 : nextStage === 2 ? 15 : nextStage === 3 ? 30 : 60;
+      const lockDate = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
+
+      setIsLocked(true);
+      setLockUntil(lockDate);
+      setRemainingSeconds(durationMinutes * 60);
+      setBlockStage(nextStage);
+      setAttemptsLeft(0);
+      setLoginError(`3 неверные попытки подряд! Панель заблокирована на ${durationMinutes} мин.`);
+
+      try {
+        localStorage.setItem('ahk_admin_lock_until', lockDate);
+        localStorage.setItem('ahk_admin_block_stage', String(nextStage));
+        localStorage.setItem('ahk_admin_attempts', '0');
+      } catch (e) {
+        console.warn(e);
+      }
+    } else {
+      setLoginError(`Неверный секретный пароль! Осталось попыток: ${nextAttempts}`);
+      try {
+        localStorage.setItem('ahk_admin_attempts', String(nextAttempts));
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+
+    setLoginLoading(false);
   };
 
-  // Save Order Status to Backend & Database
+  // Logout handler: clears persistent localStorage state
+  const handleAdminLogout = () => {
+    try {
+      localStorage.removeItem('ahk_admin_authenticated');
+      localStorage.removeItem('furniture_admin_token');
+    } catch (e) {
+      console.warn(e);
+    }
+    setIsAdminAuthenticated(false);
+    if (logoutAdmin) logoutAdmin();
+  };
+
+  // Save Order Status to LocalStorage & Backend
   const handleSaveOrderStatus = async (orderId) => {
     const targetStatus = editingStatuses[orderId];
     if (!targetStatus) return;
 
     setStatusSavingId(orderId);
     try {
-      const res = await fetch(`/api/admin/orders/${orderId}`, {
+      // 1. Update in local storage database immediately
+      updateStoredOrderStatus(orderId, targetStatus);
+      setOrders(prev =>
+        prev.map(o => (o.id === orderId ? { ...o, status: targetStatus } : o))
+      );
+      setStats(getComputedAdminStats());
+      setStatusSuccessId(orderId);
+      setTimeout(() => setStatusSuccessId(null), 3000);
+
+      // 2. Sync with backend if available
+      await fetch(getApiUrl(`/api/admin/orders/${orderId}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           ...getAdminHeaders()
         },
         body: JSON.stringify({ status: targetStatus })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setOrders(prev =>
-          prev.map(o => (o.id === orderId ? { ...o, status: data.order.status } : o))
-        );
-        setStatusSuccessId(orderId);
-        setTimeout(() => setStatusSuccessId(null), 3000);
-      } else {
-        alert('Не удалось сохранить статус заказа в базе данных');
-      }
+      }).catch(() => {});
     } catch (e) {
       console.error('Failed to update status:', e);
-      alert('Ошибка соединения при сохранении статуса');
     } finally {
       setStatusSavingId(null);
     }
   };
 
-  // Save Logistics Notes to Backend & Database
+  // Delete / Archive Order without window.confirm (Inline luxury UI confirmation)
+  const [deletingOrderId, setDeletingOrderId] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
+  const handleExecuteDelete = async (orderId) => {
+    setDeletingOrderId(orderId);
+    try {
+      // 1. Delete in local storage database immediately
+      deleteStoredOrder(orderId);
+      setOrders(prev => prev.filter(o => o.id !== orderId));
+      setConfirmDeleteId(null);
+      setStats(getComputedAdminStats());
+
+      // 2. Sync with backend if available
+      await fetch(getApiUrl(`/api/orders/${orderId}`), {
+        method: 'DELETE',
+        headers: getAdminHeaders()
+      }).catch(() => {});
+    } catch (e) {
+      console.error('Failed to delete order:', e);
+    } finally {
+      setDeletingOrderId(null);
+    }
+  };
+
+  // Save Logistics Notes to LocalStorage & Backend
   const handleSaveLogisticsNotes = async (orderId) => {
     const notes = logisticsNotesState[orderId] || '';
     setLogisticsSavingId(orderId);
 
     try {
-      const res = await fetch(`/api/admin/orders/${orderId}`, {
+      // 1. Update local storage database immediately
+      updateStoredOrderLogistics(orderId, notes);
+      setOrders(prev =>
+        prev.map(o => (o.id === orderId ? { ...o, logistics_notes: notes } : o))
+      );
+      setLogisticsSuccessId(orderId);
+      setTimeout(() => setLogisticsSuccessId(null), 3000);
+
+      // 2. Sync with backend if available
+      await fetch(getApiUrl(`/api/admin/orders/${orderId}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           ...getAdminHeaders()
         },
         body: JSON.stringify({ logistics_notes: notes })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setOrders(prev =>
-          prev.map(o => (o.id === orderId ? { ...o, logistics_notes: data.order.logistics_notes } : o))
-        );
-        setLogisticsSuccessId(orderId);
-        setTimeout(() => setLogisticsSuccessId(null), 3000);
-      } else {
-        alert('Не удалось сохранить заметку логиста');
-      }
+      }).catch(() => {});
     } catch (e) {
       console.error('Failed to update logistics notes:', e);
-      alert('Ошибка соединения при сохранении заметки');
     } finally {
       setLogisticsSavingId(null);
     }
@@ -389,7 +630,7 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
     reader.readAsDataURL(file);
   };
 
-  // Add Product to Catalog (POST /api/admin/products)
+  // Add Product to Catalog (LocalStorage + API)
   const handleAddProduct = async (e) => {
     e.preventDefault();
     setIsSubmittingProduct(true);
@@ -417,81 +658,64 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
         is_featured: Boolean(newIsFeatured)
       };
 
-      const res = await fetch('/api/admin/products', {
+      // 1. Add locally
+      const createdProduct = addStoredProduct(payload);
+      setProductSuccessMsg(t('admin_product_added'));
+      setAdminProducts(prev => [createdProduct, ...prev.filter(p => p.id !== createdProduct.id)]);
+      if (refreshProducts) refreshProducts();
+
+      // Reset form
+      setNewTitle('');
+      setNewPrice('');
+      setNewOldPrice('');
+      setNewDimensions('');
+      setNewMaterial('');
+      setNewDescription('');
+      setNewImageUrl('/images/table-walnut.jpg');
+      setNewBadge('');
+      setNewIsFeatured(false);
+      setNewInStock(true);
+      setShowAddForm(false);
+      setTimeout(() => setProductSuccessMsg(''), 4500);
+
+      // 2. Sync with backend if available
+      await fetch(getApiUrl('/api/admin/products'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...getAdminHeaders()
         },
         body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setProductSuccessMsg(t('admin_product_added'));
-        setAdminProducts(prev => [data.product, ...prev]);
-        if (refreshProducts) refreshProducts();
-
-        // Reset form
-        setNewTitle('');
-        setNewPrice('');
-        setNewOldPrice('');
-        setNewDimensions('');
-        setNewMaterial('');
-        setNewDescription('');
-        setNewImageUrl('/images/table-walnut.jpg');
-        setNewBadge('');
-        setNewIsFeatured(false);
-        setNewInStock(true);
-        setShowAddForm(false);
-        setTimeout(() => setProductSuccessMsg(''), 4500);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        setProductErrorMsg(errData.error || 'Ошибка при сохранении изделия в базе данных');
-      }
+      }).catch(() => {});
     } catch (e) {
       console.error('Failed to add product:', e);
-      setProductErrorMsg('Ошибка сети при сохранении изделия');
+      setProductErrorMsg('Ошибка при сохранении изделия');
     } finally {
       setIsSubmittingProduct(false);
     }
   };
 
-  // Live Toggle In-Stock Status (PATCH /api/admin/products/:id)
+  // Live Toggle In-Stock Status (LocalStorage + API)
   const handleToggleInStock = async (product) => {
     const nextStatus = !product.in_stock;
     setTogglingStockId(product.id);
 
-    // Optimistic UI update
+    // 1. Toggle locally
+    toggleStoredProductStock(product.id);
     setAdminProducts(prev =>
       prev.map(p => (p.id === product.id ? { ...p, in_stock: nextStatus } : p))
     );
+    if (refreshProducts) refreshProducts();
 
     try {
-      const res = await fetch(`/api/admin/products/${product.id}`, {
+      await fetch(getApiUrl(`/api/admin/products/${product.id}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           ...getAdminHeaders()
         },
         body: JSON.stringify({ in_stock: nextStatus })
-      });
-
-      if (res.ok) {
-        if (refreshProducts) refreshProducts();
-      } else {
-        // Rollback on failure
-        setAdminProducts(prev =>
-          prev.map(p => (p.id === product.id ? { ...p, in_stock: !nextStatus } : p))
-        );
-        alert('Не удалось изменить статус наличия товара в базе данных');
-      }
-    } catch (err) {
-      console.error('Failed to toggle stock status:', err);
-      setAdminProducts(prev =>
-        prev.map(p => (p.id === product.id ? { ...p, in_stock: !nextStatus } : p))
-      );
-      alert('Ошибка соединения при обновлении статуса наличия');
+      }).catch(() => {});
     } finally {
       setTogglingStockId(null);
     }
@@ -517,7 +741,7 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
     setEditErrorMsg('');
   };
 
-  // Save Edited Product (PUT /api/admin/products/:id)
+  // Save Edited Product (LocalStorage + API)
   const handleSaveEditProduct = async (e) => {
     e.preventDefault();
     if (!editingProduct) return;
@@ -539,35 +763,32 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
         is_featured: Boolean(editForm.is_featured)
       };
 
-      const res = await fetch(`/api/admin/products/${editingProduct.id}`, {
+      // 1. Update locally
+      const updated = updateStoredProduct(editingProduct.id, payload);
+      setAdminProducts(prev =>
+        prev.map(p => (p.id === editingProduct.id ? (updated || { ...p, ...payload }) : p))
+      );
+      if (refreshProducts) refreshProducts();
+      setEditingProduct(null);
+
+      // 2. Sync with backend if available
+      await fetch(getApiUrl(`/api/admin/products/${editingProduct.id}`), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           ...getAdminHeaders()
         },
         body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setAdminProducts(prev =>
-          prev.map(p => (p.id === editingProduct.id ? data.product : p))
-        );
-        if (refreshProducts) refreshProducts();
-        setEditingProduct(null);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        setEditErrorMsg(errData.error || 'Ошибка при сохранении изменений товара');
-      }
+      }).catch(() => {});
     } catch (err) {
       console.error('Failed to save edited product:', err);
-      setEditErrorMsg('Ошибка соединения при обновлении данных товара');
+      setEditErrorMsg('Ошибка при обновлении данных товара');
     } finally {
       setIsSavingEdit(false);
     }
   };
 
-  // Delete Product from Catalog (DELETE /api/admin/products/:id)
+  // Delete Product from Catalog (LocalStorage + API)
   const handleDeleteProduct = async (product) => {
     const promptText = (t('admin_delete_prompt') || 'Вы действительно хотите удалить «{title}» из каталога и базы данных?\nТовар сразу исчезнет с витрины магазина.')
       .replace('{title}', product.title);
@@ -576,20 +797,18 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
 
     setDeletingProductId(product.id);
     try {
-      const res = await fetch(`/api/admin/products/${product.id}`, {
+      // 1. Delete locally
+      deleteStoredProduct(product.id);
+      setAdminProducts(prev => prev.filter(p => p.id !== product.id));
+      if (refreshProducts) refreshProducts();
+
+      // 2. Sync with backend if available
+      await fetch(getApiUrl(`/api/admin/products/${product.id}`), {
         method: 'DELETE',
         headers: getAdminHeaders()
-      });
-
-      if (res.ok) {
-        setAdminProducts(prev => prev.filter(p => p.id !== product.id));
-        if (refreshProducts) refreshProducts();
-      } else {
-        alert('Не удалось удалить товар с сервера');
-      }
+      }).catch(() => {});
     } catch (err) {
       console.error('Failed to delete product:', err);
-      alert('Ошибка соединения при удалении товара');
     } finally {
       setDeletingProductId(null);
     }
@@ -623,9 +842,9 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
     if (orderSearch) {
       const q = orderSearch.toLowerCase();
       const match =
-        o.user_name.toLowerCase().includes(q) ||
-        o.user_email.toLowerCase().includes(q) ||
-        o.phone.toLowerCase().includes(q) ||
+        (o.user_name && o.user_name.toLowerCase().includes(q)) ||
+        (o.user_email && o.user_email.toLowerCase().includes(q)) ||
+        (o.phone && o.phone.toLowerCase().includes(q)) ||
         (o.items_summary && o.items_summary.toLowerCase().includes(q)) ||
         String(o.id).includes(q);
       if (!match) return false;
@@ -633,7 +852,7 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
     return true;
   });
 
-  const statusOptions = ['Новый', 'В производстве', 'В доставке', 'Выполнен', 'Отменен'];
+  const statusOptions = ['Новый', 'В производстве', 'Доставлен', 'В доставке', 'Выполнен', 'Отменен'];
 
   // Status badge styling helper
   const renderStatusBadge = (status) => {
@@ -643,10 +862,11 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
         return <span className="badge-pill badge-blue">{label}</span>;
       case 'В производстве':
         return <span className="badge-pill badge-gold">{label}</span>;
-      case 'В доставке':
-        return <span className="badge-pill" style={{ background: 'rgba(96, 165, 250, 0.2)', color: '#93C5FD' }}>{label}</span>;
+      case 'Доставлен':
       case 'Выполнен':
         return <span className="badge-pill badge-green">{label}</span>;
+      case 'В доставке':
+        return <span className="badge-pill" style={{ background: 'rgba(96, 165, 250, 0.2)', color: '#93C5FD' }}>{label}</span>;
       case 'Отменен':
         return <span className="badge-pill" style={{ background: 'rgba(248, 113, 113, 0.2)', color: '#F87171' }}>{label}</span>;
       default:
@@ -882,7 +1102,7 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
               <RefreshCw size={16} />
             </button>
             <button
-              onClick={logoutAdmin}
+              onClick={handleAdminLogout}
               className="btn-secondary"
               style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 18px', color: '#F87171' }}
             >
@@ -892,71 +1112,76 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
           </div>
         </div>
 
-        {/* Metric Cards with Active Currency */}
-        {stats && (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: '20px',
-              marginBottom: '36px'
-            }}
-          >
-            <div className="glass-card" style={{ padding: '22px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '600' }}>{t('admin_rev')}</span>
-                <DollarSign size={20} color="var(--wood-light)" />
-              </div>
-              <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--wood-light)', fontFamily: 'var(--font-heading)' }}>
-                {formatPrice(stats.totalRevenue)}
-              </div>
-              <div style={{ fontSize: '12px', color: '#34D399', marginTop: '6px' }}>
-                {t('admin_rev_sub')}
-              </div>
-            </div>
+        {/* Metric Cards with Active Currency (dynamically recalculated from current orders) */}
+        {(() => {
+          const totalOrdersCount = orders.length;
+          const totalRevenueAmount = orders.reduce((sum, o) => sum + (Number(o.total_price) || 0), 0);
+          const totalBuyersCount = customers.length || (stats?.totalUsers || 0);
+          const averageCheckAmount = totalOrdersCount > 0 ? Math.round(totalRevenueAmount / totalOrdersCount) : 0;
 
-            <div className="glass-card" style={{ padding: '22px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '600' }}>{t('admin_orders_count')}</span>
-                <Package size={20} color="#60A5FA" />
+          return (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gap: '20px',
+                marginBottom: '36px'
+              }}
+            >
+              <div className="glass-card" style={{ padding: '22px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>{t('admin_rev')}</span>
+                  <DollarSign size={20} color="var(--wood-light)" />
+                </div>
+                <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--wood-light)', fontFamily: 'var(--font-heading)' }}>
+                  {formatPrice(totalRevenueAmount)}
+                </div>
+                <div style={{ fontSize: '12px', color: '#34D399', marginTop: '6px' }}>
+                  {t('admin_rev_sub')}
+                </div>
               </div>
-              <div style={{ fontSize: '24px', fontWeight: '800', color: '#F8F6F2', fontFamily: 'var(--font-heading)' }}>
-                {stats.totalOrders}
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                {t('admin_orders_sub')}
-              </div>
-            </div>
 
-            <div className="glass-card" style={{ padding: '22px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '600' }}>{t('admin_buyers_count')}</span>
-                <Users size={20} color="#34D399" />
+              <div className="glass-card" style={{ padding: '22px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>{t('admin_orders_count')}</span>
+                  <Package size={20} color="#60A5FA" />
+                </div>
+                <div style={{ fontSize: '24px', fontWeight: '800', color: '#F8F6F2', fontFamily: 'var(--font-heading)' }}>
+                  {totalOrdersCount}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  {t('admin_orders_sub')}
+                </div>
               </div>
-              <div style={{ fontSize: '24px', fontWeight: '800', color: '#F8F6F2', fontFamily: 'var(--font-heading)' }}>
-                {stats.totalUsers}
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                {t('admin_users_sub')}
-              </div>
-            </div>
 
-            <div className="glass-card" style={{ padding: '22px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '600' }}>{t('admin_avg_check')}</span>
-                <TrendingUp size={20} color="var(--wood-warm)" />
+              <div className="glass-card" style={{ padding: '22px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>{t('admin_buyers_count')}</span>
+                  <Users size={20} color="#34D399" />
+                </div>
+                <div style={{ fontSize: '24px', fontWeight: '800', color: '#F8F6F2', fontFamily: 'var(--font-heading)' }}>
+                  {totalBuyersCount}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  {t('admin_users_sub')}
+                </div>
               </div>
-              <div style={{ fontSize: '24px', fontWeight: '800', color: '#F8F6F2', fontFamily: 'var(--font-heading)' }}>
-                {stats.totalOrders > 0
-                  ? formatPrice(Math.round(stats.totalRevenue / stats.totalOrders))
-                  : formatPrice(0)}
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                {t('admin_avg_sub')}
+
+              <div className="glass-card" style={{ padding: '22px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>{t('admin_avg_check')}</span>
+                  <TrendingUp size={20} color="var(--wood-warm)" />
+                </div>
+                <div style={{ fontSize: '24px', fontWeight: '800', color: '#F8F6F2', fontFamily: 'var(--font-heading)' }}>
+                  {formatPrice(averageCheckAmount)}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  {t('admin_avg_sub')}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Tab Navigation */}
         <div
@@ -1216,6 +1441,96 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
                             {t('admin_status_saved')}
                           </span>
                         )}
+
+                        {/* Delete Order Button with Inline Luxury Confirmation (No window.confirm) */}
+                        {confirmDeleteId === order.id ? (
+                          <div
+                            style={{
+                              marginLeft: 'auto',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              background: 'rgba(239, 68, 68, 0.15)',
+                              border: '1px solid rgba(239, 68, 68, 0.45)',
+                              padding: '5px 12px',
+                              borderRadius: 'var(--radius-sm)'
+                            }}
+                          >
+                            <span style={{ fontSize: '12px', color: '#FCA5A5', fontWeight: '600' }}>
+                              Удалить #{order.id}?
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleExecuteDelete(order.id)}
+                              disabled={deletingOrderId === order.id}
+                              style={{
+                                background: '#DC2626',
+                                color: '#FFFFFF',
+                                border: 'none',
+                                borderRadius: '4px',
+                                padding: '5px 12px',
+                                fontSize: '11px',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              <Trash2 size={12} />
+                              <span>{deletingOrderId === order.id ? '...' : 'Да'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              disabled={deletingOrderId === order.id}
+                              style={{
+                                background: 'rgba(255, 255, 255, 0.08)',
+                                color: 'var(--text-secondary)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: '4px',
+                                padding: '5px 10px',
+                                fontSize: '11px',
+                                fontWeight: '600',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Отмена
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(order.id)}
+                            title="Удалить заказ из базы данных"
+                            style={{
+                              marginLeft: 'auto',
+                              background: 'rgba(239, 68, 68, 0.12)',
+                              border: '1px solid rgba(239, 68, 68, 0.35)',
+                              color: '#FCA5A5',
+                              padding: '8px 16px',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: '13px',
+                              fontWeight: '600',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.22)';
+                              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.6)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)';
+                              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+                            }}
+                          >
+                            <Trash2 size={14} />
+                            <span>Удалить заказ</span>
+                          </button>
+                        )}
                       </div>
 
                       {/* Items Detailed List */}
@@ -1243,8 +1558,12 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
                             >
                               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                 <img
-                                  src={item.image_url}
+                                  src={resolveAssetUrl(item.image_url)}
                                   alt={item.product_title}
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null;
+                                    e.currentTarget.src = resolveAssetUrl('/images/table-walnut.jpg');
+                                  }}
                                   style={{ width: '36px', height: '36px', borderRadius: '6px', objectFit: 'cover' }}
                                 />
                                 <div>
@@ -1735,7 +2054,7 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
                               transition: 'all 0.2s ease'
                             }}
                           >
-                            <img src={img.url} alt={t(img.key)} style={{ width: '100%', height: '70px', objectFit: 'cover' }} />
+                            <img src={resolveAssetUrl(img.url)} alt={t(img.key)} style={{ width: '100%', height: '70px', objectFit: 'cover' }} />
                             <div style={{ padding: '6px', fontSize: '11px', color: newImageUrl === img.url ? 'var(--wood-light)' : 'var(--text-muted)', textAlign: 'center', fontWeight: '600' }}>
                               {t(img.key)}
                             </div>
@@ -1795,7 +2114,7 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
                     {newImageUrl && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginTop: '10px' }}>
                         <div style={{ width: '80px', height: '60px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-subtle)', background: '#090A0D' }}>
-                          <img src={newImageUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <img src={resolveAssetUrl(newImageUrl)} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                           <span style={{ color: '#34D399', fontWeight: '600' }}>{t('admin_photo_selected')}</span>
@@ -1991,8 +2310,12 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
                         }}
                       >
                         <img
-                          src={p.image_url}
+                          src={resolveAssetUrl(p.image_url)}
                           alt={p.title}
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = resolveAssetUrl('/images/table-walnut.jpg');
+                          }}
                           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         />
                         {p.badge && (
@@ -2377,7 +2700,7 @@ export const AdminPage = ({ setActivePage, products = [], refreshProducts }) => 
                       {editForm.image_url && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
                           <div style={{ width: '70px', height: '50px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-subtle)', background: '#090A0D' }}>
-                            <img src={editForm.image_url} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <img src={resolveAssetUrl(editForm.image_url)} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           </div>
                           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                             {t('admin_current_photo')}

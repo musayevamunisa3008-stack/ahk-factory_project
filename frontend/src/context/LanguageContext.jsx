@@ -15,7 +15,7 @@ const translations = {
     auth_authorized: "Tizimga kirildi",
 
     // Hero
-    hero_badge: "Toshkentda to'liq siklli duradgorlik ustaxonasi",
+    hero_badge: "Ahk Factory — Toshkentda to'liq siklli duradgorlik ustaxonasi",
     hero_title: "Tabiiy massivdan yaratilgan nafis mebellar san'ati",
     hero_subtitle: "Kavkaz eman, kulrang shumtol va yong'oq daraxtidan ovqatlanish va ish stollari, shkaflar, stullar va yashirin eshiklar yaratamiz.",
     hero_btn_catalog: "Katalogni ko'rish",
@@ -319,7 +319,7 @@ const translations = {
     nav_logout: "Выйти",
     auth_authorized: "Авторизован",
 
-    hero_badge: "Столярная мануфактура полного цикла в Ташкенте",
+    hero_badge: "Ahk Factory — Столярная мануфактура полного цикла в Ташкенте",
     hero_title: "Искусство создания мебели из массива с душой дерева",
     hero_subtitle: "Создаем обеденные и рабочие столы, дизайнерские шкафы, анатомические стулья и скрытые двери из отборного кавказского дуба, ясеня и ореха.",
     hero_btn_catalog: "Перейти в каталог",
@@ -614,7 +614,7 @@ const translations = {
     nav_logout: "Sign Out",
     auth_authorized: "Authorized",
 
-    hero_badge: "Full-Cycle Artisanal Woodworking Atelier in Tashkent",
+    hero_badge: "Ahk Factory — Full-Cycle Artisanal Woodworking Atelier in Tashkent",
     hero_title: "The Art of Solid Wood Furniture Crafted with Soul",
     hero_subtitle: "We handcraft dining and work tables, designer wardrobes, ergonomic chairs, and flush interior doors from walnut, oak, and ash.",
     hero_btn_catalog: "Explore Catalog",
@@ -909,7 +909,7 @@ const translations = {
     nav_logout: "Çıkış Yap",
     auth_authorized: "Yetkilendirildi",
 
-    hero_badge: "Taşkent'te Tam Döngü Marangozluk Atölyesi",
+    hero_badge: "Ahk Factory — Taşkent'te Tam Döngü Marangozluk Atölyesi",
     hero_title: "Doğal Masif Ahşaptan Üretilen Zarif Mobilya Sanatı",
     hero_subtitle: "Kafkas meşesi, dişbudak ve ceviz ağacından yemek ve çalışma masaları, dolaplar, sandalyeler ve gizli kapılar üretiyoruz.",
     hero_btn_catalog: "Kataloğu İncele",

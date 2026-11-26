@@ -2,50 +2,124 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { X, Package, Truck, Sparkles } from 'lucide-react';
+import { getApiUrl, resolveAssetUrl } from '../config/api';
+import { getStoredUserOrders, getStoredOrders } from '../services/storageService';
+import { X, Package, Truck, Sparkles, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 export const MyOrdersModal = ({ isOpen, onClose }) => {
   const { user, getAuthHeaders } = useAuth();
   const { t } = useLanguage();
   const { formatPrice } = useCurrency();
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (isOpen) {
-      fetchOrders();
-    }
-  }, [isOpen]);
-
-  const fetchOrders = async () => {
-    setLoading(true);
+  const [orders, setOrders] = useState(() => {
     try {
-      const res = await fetch('/api/orders/my', {
+      const saved = user?.id ? localStorage.getItem(`ahk_user_orders_${user.id}`) : null;
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      const saved = user?.id ? localStorage.getItem(`ahk_user_orders_${user.id}`) : null;
+      return !saved;
+    } catch {
+      return true;
+    }
+  });
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchOrders = async (showLoadingSpinner = false) => {
+    // 1. Instantly read from storageService
+    const localOrders = getStoredUserOrders(user);
+    if (Array.isArray(localOrders) && localOrders.length > 0) {
+      setOrders(localOrders);
+      setLoading(false);
+    } else if (showLoadingSpinner && orders.length === 0) {
+      setLoading(true);
+    }
+
+    try {
+      const res = await fetch(getApiUrl('/api/orders'), {
         headers: getAuthHeaders()
       });
       if (res.ok) {
         const data = await res.json();
-        setOrders(data);
+        if (Array.isArray(data)) {
+          setOrders(data);
+          if (user?.id) {
+            localStorage.setItem(`ahk_user_orders_${user.id}`, JSON.stringify(data));
+          }
+          return;
+        }
+      } else {
+        const fallbackRes = await fetch(getApiUrl('/api/orders/my'), {
+          headers: getAuthHeaders()
+        });
+        if (fallbackRes.ok) {
+          const data = await fallbackRes.json();
+          if (Array.isArray(data)) {
+            setOrders(data);
+            if (user?.id) {
+              localStorage.setItem(`ahk_user_orders_${user.id}`, JSON.stringify(data));
+            }
+            return;
+          }
+        }
       }
     } catch (e) {
-      console.error('Failed to fetch user orders:', e);
+      // Backend unavailable, fallback to local storage
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
+    }
+
+    if (user?.id) {
+      try {
+        const saved = localStorage.getItem(`ahk_user_orders_${user.id}`);
+        if (saved) {
+          setOrders(JSON.parse(saved));
+        }
+      } catch (e) {}
     }
   };
 
+  // Live-опрос списка заказов и мгновенная реакция на события админки
+  useEffect(() => {
+    if (!isOpen) return;
+    fetchOrders(true);
+    const interval = setInterval(() => {
+      fetchOrders(false);
+    }, 2000);
+
+    const onUpdate = () => fetchOrders(false);
+    window.addEventListener('ahk_orders_updated', onUpdate);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('ahk_orders_updated', onUpdate);
+    };
+  }, [isOpen, user?.id]);
+
   if (!isOpen) return null;
+
+  const handleManualRefresh = () => {
+    setIsRefreshing(true);
+    fetchOrders(false);
+  };
 
   const getStatusBadge = (status) => {
     switch (status) {
       case 'Новый':
-        return <span className="badge-pill badge-blue">{status}</span>;
+        return <span className="badge-pill badge-blue">● {status}</span>;
       case 'В производстве':
-        return <span className="badge-pill badge-gold">{status}</span>;
+        return <span className="badge-pill badge-gold">⚙ {status}</span>;
       case 'В доставке':
-        return <span className="badge-pill" style={{ background: 'rgba(96, 165, 250, 0.2)', color: '#93C5FD' }}>{status}</span>;
+        return <span className="badge-pill" style={{ background: 'rgba(96, 165, 250, 0.2)', color: '#93C5FD' }}>🚚 {status}</span>;
+      case 'Доставлен':
       case 'Выполнен':
-        return <span className="badge-pill badge-green">{status}</span>;
+        return <span className="badge-pill badge-green" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>✓ {status}</span>;
+      case 'Отменен':
+        return <span className="badge-pill" style={{ background: 'rgba(248, 113, 113, 0.2)', color: '#F87171' }}>✕ {status}</span>;
       default:
         return <span className="badge-pill" style={{ background: '#333', color: '#ccc' }}>{status}</span>;
     }
@@ -96,18 +170,39 @@ export const MyOrdersModal = ({ isOpen, onClose }) => {
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: '6px'
-            }}
-          >
-            <X size={20} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={handleManualRefresh}
+              title="Обновить статусы"
+              style={{
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '8px',
+                color: isRefreshing ? 'var(--wood-light)' : 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '6px 10px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '12px'
+              }}
+            >
+              <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+              <span>Обновить</span>
+            </button>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '6px'
+              }}
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Content list */}
@@ -159,6 +254,78 @@ export const MyOrdersModal = ({ isOpen, onClose }) => {
                     {getStatusBadge(order.status)}
                   </div>
 
+                  {/* Visual Timeline Stepper for Active Orders */}
+                  {['Новый', 'В производстве', 'В доставке'].includes(order.status) && (
+                    <div
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '10px 12px',
+                        marginBottom: '14px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--wood-light)', fontWeight: '700', letterSpacing: '0.5px' }}>
+                          Текущий этап выполнения
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          ● Синхронизация 5с
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                        {[
+                          { key: 'Новый', title: '1. Новый', desc: 'Принят в работу' },
+                          { key: 'В производстве', title: '2. В производстве', desc: 'Сборка мастером' },
+                          { key: 'В доставке', title: '3. В доставке', desc: 'Курьер везет заказ' }
+                        ].map((step, sIdx) => {
+                          const isCurrent = order.status === step.key;
+                          const isPast =
+                            (order.status === 'В производстве' && sIdx === 0) ||
+                            (order.status === 'В доставке' && sIdx <= 1);
+
+                          return (
+                            <div
+                              key={step.key}
+                              style={{
+                                padding: '8px 6px',
+                                borderRadius: '6px',
+                                background: isCurrent
+                                  ? 'rgba(200, 155, 109, 0.16)'
+                                  : isPast
+                                  ? 'rgba(52, 211, 153, 0.1)'
+                                  : 'rgba(255, 255, 255, 0.02)',
+                                border: isCurrent
+                                  ? '1px solid var(--wood-light)'
+                                  : isPast
+                                  ? '1px solid rgba(52, 211, 153, 0.3)'
+                                  : '1px solid var(--border-subtle)',
+                                textAlign: 'center'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: '11px',
+                                  fontWeight: '700',
+                                  color: isCurrent
+                                    ? 'var(--wood-light)'
+                                    : isPast
+                                    ? '#34D399'
+                                    : 'var(--text-muted)'
+                                }}
+                              >
+                                {isPast ? `✓ ${step.title}` : step.title}
+                              </div>
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                {step.desc}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Items */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
                     {order.items?.map((item, idx) => (
@@ -173,8 +340,12 @@ export const MyOrdersModal = ({ isOpen, onClose }) => {
                       >
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                           <img
-                            src={item.image_url}
+                            src={resolveAssetUrl(item.image || item.image_url)}
                             alt={item.product_title}
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src = resolveAssetUrl('/images/table-walnut.jpg');
+                            }}
                             style={{
                               width: '44px',
                               height: '44px',

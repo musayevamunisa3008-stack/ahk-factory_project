@@ -317,20 +317,36 @@ class DatabaseManager {
       try {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         this.data = JSON.parse(raw);
-        if (!this.data.user_security) {
-          this.data.user_security = {};
-        }
-        if (!this.data.admin_security) {
-          this.data.admin_security = {
-            failed_attempts: 0,
-            block_stage: 0,
-            lock_until: null
-          };
-        }
       } catch (e) {
         console.error('Error reading DB_FILE, creating fresh database:', e.message);
       }
     }
+
+    if (!this.data || typeof this.data !== 'object') {
+      this.data = {};
+    }
+    if (!Array.isArray(this.data.users)) {
+      this.data.users = [];
+    }
+    if (!Array.isArray(this.data.products)) {
+      this.data.products = [];
+    }
+    if (!Array.isArray(this.data.orders)) {
+      this.data.orders = [];
+    }
+    if (!this.data.user_security || typeof this.data.user_security !== 'object') {
+      this.data.user_security = {};
+    }
+    if (!this.data.admin_security || typeof this.data.admin_security !== 'object') {
+      this.data.admin_security = {
+        failed_attempts: 0,
+        block_stage: 0,
+        lock_until: null
+      };
+    }
+    if (!this.data.nextUserId) this.data.nextUserId = 1;
+    if (!this.data.nextProductId) this.data.nextProductId = 1;
+    if (!this.data.nextOrderId) this.data.nextOrderId = 1;
   }
 
   saveToFile() {
@@ -343,7 +359,9 @@ class DatabaseManager {
 
   // --- Users ---
   async createUser({ first_name, last_name, email, password, phone }) {
-    const existing = this.data.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (!Array.isArray(this.data.users)) this.data.users = [];
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const existing = this.data.users.find(u => u && u.email && u.email.toLowerCase() === normalizedEmail);
     if (existing) {
       throw new Error('Пользователь с таким email уже зарегистрирован');
     }
@@ -351,9 +369,9 @@ class DatabaseManager {
     const password_hash = await bcrypt.hash(password, 10);
     const newUser = {
       id: this.data.nextUserId++,
-      first_name,
-      last_name,
-      email: email.toLowerCase(),
+      first_name: String(first_name || '').trim(),
+      last_name: String(last_name || '').trim(),
+      email: normalizedEmail,
       password_hash,
       phone: phone || '',
       created_at: new Date().toISOString()
@@ -366,7 +384,10 @@ class DatabaseManager {
   }
 
   async getUserByEmail(email) {
-    return this.data.users.find(u => u.email.toLowerCase() === email.toLowerCase()) || null;
+    if (!email) return null;
+    if (!Array.isArray(this.data.users)) this.data.users = [];
+    const normalizedEmail = String(email).trim().toLowerCase();
+    return this.data.users.find(u => u && u.email && u.email.toLowerCase() === normalizedEmail) || null;
   }
 
   async getUserById(id) {
@@ -477,17 +498,81 @@ class DatabaseManager {
   }
 
   // --- Orders ---
-  async createOrder({ user, items, phone, address, payment_method, customer_notes }) {
+  async verifyPromoCode(userId, promoCode, userEmail = null, userPhone = null) {
+    const normalized = promoCode ? promoCode.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+    const isAhkFactoryPromo = normalized === 'ahk factory' || normalized === 'ahkfactory' || normalized === 'ahk';
+    if (!isAhkFactoryPromo) {
+      return { valid: false, error: 'Неверный промокод. Введите «Ahk Factory»' };
+    }
+
+    if (userId) {
+      const dbUser = this.data.users.find(u => u.id === parseInt(userId));
+      if (dbUser && dbUser.used_promo) {
+        return { valid: false, error: 'Промокод уже был использован' };
+      }
+    }
+
+    if (userEmail) {
+      const dbUserByEmail = this.data.users.find(u => u.email && u.email.toLowerCase() === userEmail.toLowerCase());
+      if (dbUserByEmail && dbUserByEmail.used_promo) {
+        return { valid: false, error: 'Промокод уже был использован' };
+      }
+    }
+
+    const cleanPhone = userPhone ? String(userPhone).replace(/\D/g, '') : null;
+    const existingOrderWithPromo = this.data.orders.find(o => {
+      if (!o.promo_code) return false;
+      if (userId && o.user_id === parseInt(userId)) return true;
+      if (userEmail && o.user_email && o.user_email.toLowerCase() === userEmail.toLowerCase()) return true;
+      if (cleanPhone && o.phone && String(o.phone).replace(/\D/g, '') === cleanPhone) return true;
+      return false;
+    });
+
+    if (existingOrderWithPromo) {
+      return { valid: false, error: 'Промокод уже был использован' };
+    }
+
+    return { valid: true, promo_code: 'Ahk Factory', free_delivery: true };
+  }
+
+  async createOrder({ user, items, phone, address, payment_method, customer_notes, promo_code }) {
     if (!items || items.length === 0) {
       throw new Error('Корзина пуста');
     }
+
+    const normalizedPromo = promo_code ? promo_code.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+    const isAhkFactoryPromo = normalizedPromo === 'ahk factory' || normalizedPromo === 'ahkfactory' || normalizedPromo === 'ahk';
+
+    // Verify one-time usage per user, email, and phone
+    const userPhoneClean = (phone || user.phone || '').replace(/\D/g, '');
+    const userEmailClean = (user.email || '').toLowerCase();
+
+    const dbUser = this.data.users.find(u => u.id === user.id || (u.email && u.email.toLowerCase() === userEmailClean));
+    if (isAhkFactoryPromo && dbUser && dbUser.used_promo) {
+      throw new Error('Промокод уже был использован');
+    }
+
+    if (isAhkFactoryPromo) {
+      const orderAlreadyUsedPromo = this.data.orders.find(o => {
+        if (!o.promo_code) return false;
+        if (o.user_id === user.id) return true;
+        if (o.user_email && o.user_email.toLowerCase() === userEmailClean) return true;
+        if (userPhoneClean && o.phone && o.phone.replace(/\D/g, '') === userPhoneClean) return true;
+        return false;
+      });
+      if (orderAlreadyUsedPromo) {
+        throw new Error('Промокод уже был использован');
+      }
+    }
+
+    const deliveryCost = isAhkFactoryPromo ? 0 : 150000;
 
     let calculatedTotal = 0;
     const orderItems = items.map((item, idx) => {
       const prod = this.data.products.find(p => p.id === item.product_id);
       const price = prod ? prod.price : item.price;
       const title = prod ? prod.title : item.title;
-      const image_url = prod ? prod.image_url : item.image_url;
+      const image = prod ? (prod.image_url || prod.image) : (item.image || item.image_url || '');
       const dimensions = item.custom_dimensions || item.dimensions || (prod ? prod.dimensions : '');
       const wood_finish = item.wood_finish || (prod ? prod.wood_type : '') || '';
       const fabric_type = item.fabric_type || '';
@@ -509,18 +594,28 @@ class DatabaseManager {
         is_custom: is_custom,
         custom_dimensions: item.custom_dimensions || '',
         custom_notes: custom_notes || '',
-        image_url: image_url || ''
+        image_url: image || '',
+        image: image || ''
       };
     });
+
+    const finalTotal = calculatedTotal + deliveryCost;
+
+    if (isAhkFactoryPromo && dbUser) {
+      dbUser.used_promo = true;
+    }
 
     const newOrder = {
       id: this.data.nextOrderId++,
       user_id: user.id,
-      user_name: `${user.first_name} ${user.last_name}`.trim(),
+      user_name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email,
       user_email: user.email,
       phone: phone || user.phone || '',
       address: address || '',
-      total_price: calculatedTotal,
+      items_price: calculatedTotal,
+      delivery_fee: deliveryCost,
+      promo_code: isAhkFactoryPromo ? 'Ahk Factory' : (promo_code || null),
+      total_price: finalTotal,
       status: 'Новый',
       payment_method: payment_method || 'При получении',
       customer_notes: customer_notes || '',
@@ -532,6 +627,11 @@ class DatabaseManager {
     this.data.orders.unshift(newOrder);
     this.saveToFile();
     return newOrder;
+  }
+
+  async getOrderById(orderId) {
+    const id = parseInt(orderId);
+    return this.data.orders.find(o => o.id === id) || null;
   }
 
   async getOrdersByUser(userId) {
@@ -587,6 +687,16 @@ class DatabaseManager {
 
   async updateOrderLogistics(orderId, logistics_notes) {
     return this.updateOrder(orderId, { logistics_notes });
+  }
+
+  // Delete / Archive order
+  async deleteOrder(orderId) {
+    const id = parseInt(orderId);
+    const index = this.data.orders.findIndex(o => o.id === id);
+    if (index === -1) return null;
+    const deleted = this.data.orders.splice(index, 1)[0];
+    this.saveToFile();
+    return deleted;
   }
 
   // --- Admin Stats ---
